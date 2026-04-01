@@ -34,6 +34,7 @@ import qualified Skylighting.Core as Sky
 import           Matterhorn.Constants ( normalChannelSigil, editMarking )
 import           Matterhorn.Draw.RichText.Flatten
 import           Matterhorn.Draw.RichText.Wrap
+import           Matterhorn.Emoji ( EmojiCollection, lookupEmojiUnicode, emptyEmojiCollection )
 import           Matterhorn.Themes
 import           Matterhorn.Types ( HighlightSet(..), emptyHSet, SemEq(..)
                                   , addUserSigil, resultToWidget )
@@ -56,10 +57,12 @@ renderRichText :: SemEq a
                -> Maybe (Int -> Inline -> Maybe a)
                -- ^ An optional function to build resource names for
                -- clickable regions.
+               -> EmojiCollection
+               -- ^ The emoji collection for Unicode rendering.
                -> Blocks
                -- ^ The content to render.
                -> Widget a
-renderRichText curUser hSet w doWrap doVerbTrunc nameGen (Blocks bs) =
+renderRichText curUser hSet w doWrap doVerbTrunc nameGen em (Blocks bs) =
     runReader (do
               blocks <- mapM renderBlock (addBlankLines bs)
               return $ B.vBox $ toList blocks)
@@ -69,12 +72,13 @@ renderRichText curUser hSet w doWrap doVerbTrunc nameGen (Blocks bs) =
                        , drawDoLineWrapping = doWrap
                        , drawTruncateVerbatimBlocks = doVerbTrunc
                        , drawNameGen = nameGen
+                       , drawEmojiCollection = em
                        })
 
 -- Render text to markdown without username highlighting, permalink
 -- detection, or clickable links
 renderText :: SemEq a => Text -> Widget a
-renderText txt = renderText' Nothing "" emptyHSet Nothing txt
+renderText txt = renderText' Nothing "" emptyHSet Nothing emptyEmojiCollection txt
 
 renderText' :: SemEq a
             => Maybe TeamBaseURL
@@ -86,11 +90,13 @@ renderText' :: SemEq a
             -> Maybe (Int -> Inline -> Maybe a)
             -- ^ An optional function to build resource names for
             -- clickable regions.
+            -> EmojiCollection
+            -- ^ The emoji collection for Unicode rendering.
             -> Text
             -- ^ The text to parse and then render as rich text.
             -> Widget a
-renderText' baseUrl curUser hSet nameGen t =
-    renderRichText curUser hSet Nothing True Nothing nameGen $
+renderText' baseUrl curUser hSet nameGen em t =
+    renderRichText curUser hSet Nothing True Nothing nameGen em $
         parseMarkdown baseUrl t
 
 -- Add blank lines only between adjacent elements of the same type, to
@@ -127,6 +133,7 @@ data DrawCfg a =
             , drawDoLineWrapping :: Bool
             , drawTruncateVerbatimBlocks :: Maybe Int
             , drawNameGen :: Maybe (Int -> Inline -> Maybe a)
+            , drawEmojiCollection :: EmojiCollection
             }
 
 renderBlock :: (Ord a, SemEq a) => Block -> M (Widget a) a
@@ -242,11 +249,12 @@ renderInlines es = do
     hSet <- asks drawHighlightSet
     curUser <- asks drawCurUser
     nameGen <- asks drawNameGen
+    emCol <- asks drawEmojiCollection
 
     return $ B.Widget B.Fixed B.Fixed $ do
         ctx <- B.getContext
         let width = fromMaybe (ctx^.B.availWidthL) w
-            ws    = fmap (renderWrappedLine curUser) $
+            ws    = fmap (renderWrappedLine curUser emCol) $
                     mconcat $
                     (doLineWrapping width <$> (F.toList $ flattenInlineSeq hSet nameGen es))
         B.render (vBox ws)
@@ -268,14 +276,14 @@ renderList ty _spacing bs = do
 
     return $ vBox results
 
-renderWrappedLine :: (Ord a, Show a) => Text -> WrappedLine a -> Widget a
-renderWrappedLine curUser l = hBox $ F.toList $ renderFlattenedValue curUser <$> l
+renderWrappedLine :: (Ord a, Show a) => Text -> EmojiCollection -> WrappedLine a -> Widget a
+renderWrappedLine curUser em l = hBox $ F.toList $ renderFlattenedValue curUser em <$> l
 
-renderFlattenedValue :: (Ord a, Show a) => Text -> FlattenedValue a -> Widget a
-renderFlattenedValue curUser (NonBreaking rs) =
-    let renderLine = hBox . F.toList . fmap (renderFlattenedValue curUser)
+renderFlattenedValue :: (Ord a, Show a) => Text -> EmojiCollection -> FlattenedValue a -> Widget a
+renderFlattenedValue curUser em (NonBreaking rs) =
+    let renderLine = hBox . F.toList . fmap (renderFlattenedValue curUser em)
     in vBox (F.toList $ renderLine <$> F.toList rs)
-renderFlattenedValue curUser (SingleInline fi) = addClickable $ addHyperlink $ addStyles widget
+renderFlattenedValue curUser em (SingleInline fi) = addClickable $ addHyperlink $ addStyles widget
     where
         val = fiValue fi
         mUrl = fiURL fi
@@ -304,8 +312,10 @@ renderFlattenedValue curUser (SingleInline fi) = addClickable $ addHyperlink $ a
             FUser u              -> colorUsername curUser u $ addUserSigil u
             FChannel c           -> B.withDefAttr channelNameAttr $
                                     B.txt $ normalChannelSigil <> c
-            FEmoji em            -> B.withDefAttr emojiAttr $
-                                    B.txt $ ":" <> em <> ":"
+            FEmoji e             -> B.withDefAttr emojiAttr $
+                                    B.txt $ case lookupEmojiUnicode em e of
+                                        Just unicode -> unicode
+                                        Nothing      -> ":" <> e <> ":"
             FText t              -> if t == T.singleton (cursorSentinel)
                                     then B.visible $ B.txt " "
                                     else textWithCursor t

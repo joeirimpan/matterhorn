@@ -163,7 +163,7 @@ reactionsText st tId m = viewport vpName Vertical body
             Nothing
 
         usernameText uids =
-            renderText' Nothing (myUsername st) hs (Just clickableUsernames) $
+            renderText' Nothing (myUsername st) hs (Just clickableUsernames) (st^.csResources.crEmoji) $
             T.intercalate ", " $
             fmap addUserSigil $
             catMaybes (lookupUsername <$> F.toList uids)
@@ -210,6 +210,7 @@ viewMessageBox st tId msg =
                                  , mdTruncateVerbatimBlocks = Nothing
                                  , mdClickableNameTag  = ViewMessageArea tId
                                  , mdRenderReplyIndent = False
+                                 , mdEmojiCollection   = st^.csResources.crEmoji
                                  }
             in renderMessage md
 

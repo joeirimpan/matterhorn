@@ -203,6 +203,7 @@ renderChannelHeader st tId hs chan =
 
     in renderText' (Just baseUrl) (myUsername st)
          hs (Just (mkClickableInline Nothing (ChannelTopic $ chan^.ccInfo.cdChannelId)))
+         (st^.csResources.crEmoji)
          (channelNameString <> maybeTopic)
 
 drawThreadWindow :: ChatState -> TeamId -> Widget Name
@@ -223,7 +224,7 @@ drawThreadWindow st tId = withDefAttr threadAttr body
                         _ -> "Thread in "
                 in prefix <> mkChannelName st (chan^.ccInfo)
 
-        title = renderText' Nothing "" hs Nothing titleText
+        title = renderText' Nothing "" hs Nothing (st^.csResources.crEmoji) titleText
         focused = st^.csTeam(tId).tsMessageInterfaceFocus == FocusThread
         body = title <=> hBorder <=> messageUI
         messageUI = drawMessageInterface st hs tId False ti False focused

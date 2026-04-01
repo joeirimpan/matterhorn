@@ -36,6 +36,7 @@ import           Matterhorn.Prelude
 
 import           Matterhorn.Draw.Util
 import           Matterhorn.Draw.RichText
+import           Matterhorn.Emoji ( EmojiCollection, lookupEmojiUnicode )
 import           Matterhorn.Themes
 import           Matterhorn.Types
 import           Matterhorn.Types.RichText
@@ -98,6 +99,9 @@ data MessageData =
                 , mdClickableNameTag :: Name
                 -- ^ Used to namespace clickable extents produced by
                 -- rendering this message
+                , mdEmojiCollection :: EmojiCollection
+                -- ^ The emoji collection for rendering Unicode emoji
+                -- glyphs in message bodies and reactions.
                 }
 
 maxMessageHeight :: Int
@@ -191,6 +195,7 @@ renderChatMessage st hs ind threadState clickableNameTag renderTimeFunc renderRe
               , mdWrapNonhighlightedCodeBlocks = True
               , mdTruncateVerbatimBlocks = st^.csVerbatimTruncateSetting
               , mdClickableNameTag  = clickableNameTag
+              , mdEmojiCollection   = st^.csResources.crEmoji
               }
         fullMsg =
           case msg^.mUser of
@@ -483,7 +488,8 @@ renderMessage md@MessageData { mdMessage = msg, .. } =
                          , hBox [txt "  ", renderRichText mdMyUsername hs ((subtract 2) <$> w)
                                                  mdWrapNonhighlightedCodeBlocks
                                                  mdTruncateVerbatimBlocks
-                                                 (Just (mkClickableInline (msg^.mMessageId) mdClickableNameTag)) (Blocks bs)]
+                                                 (Just (mkClickableInline (msg^.mMessageId) mdClickableNameTag))
+                                                 mdEmojiCollection (Blocks bs)]
                          ]
                else nameNextToMessage hs w nameElems bs
 
@@ -495,7 +501,8 @@ renderMessage md@MessageData { mdMessage = msg, .. } =
                               , renderRichText mdMyUsername hs newW
                                   mdWrapNonhighlightedCodeBlocks
                                   mdTruncateVerbatimBlocks
-                                  (Just (mkClickableInline (msg^.mMessageId) mdClickableNameTag)) (Blocks bs)
+                                  (Just (mkClickableInline (msg^.mMessageId) mdClickableNameTag))
+                                  mdEmojiCollection (Blocks bs)
                               ]
 
         isBreak i = i `elem` [ELineBreak, ESoftBreak]
@@ -517,8 +524,11 @@ messageReactions MessageData { mdMessage = msg, .. } =
     else let renderR e us lst =
                  let n = Set.size us
                      mine = isMyReaction us
-                     content = if | n == 1    -> "[" <> e <> "]"
-                                  | otherwise -> "[" <> e <> " " <> T.pack (show n) <> "]"
+                     emojiDisplay = case lookupEmojiUnicode mdEmojiCollection e of
+                         Just unicode -> unicode
+                         Nothing      -> e
+                     content = if | n == 1    -> "[" <> emojiDisplay <> "]"
+                                  | otherwise -> "[" <> emojiDisplay <> " " <> T.pack (show n) <> "]"
                      w = makeReactionWidget mine e us content
                  in padRight (Pad 1) w : lst
              nonEmptyReactions = Map.filter (not . Set.null) $ msg^.mReactions

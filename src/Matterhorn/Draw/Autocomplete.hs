@@ -20,6 +20,7 @@ import           Network.Mattermost.Types ( User(..), Channel(..), TeamId )
 import           Matterhorn.Constants ( normalChannelSigil )
 import           Matterhorn.Draw.ChannelList ( channelListWidth )
 import           Matterhorn.Draw.Util ( mkChannelName )
+import           Matterhorn.Emoji ( EmojiCollection, lookupEmojiUnicode )
 import           Matterhorn.Themes
 import           Matterhorn.Types
 import           Matterhorn.Types.Common ( sanitizeUserText )
@@ -126,7 +127,7 @@ renderAutocompleteBox st tId mCurChan which ac =
                     maybeLimit $
                     vBox [ hBorderWithLabel label
                          , vLimit visibleHeight $
-                           renderList (renderAutocompleteAlternative curUser) True matchList
+                           renderList (renderAutocompleteAlternative curUser (st^.csResources.crEmoji)) True matchList
                          , footer
                          ]
 
@@ -161,18 +162,18 @@ renderAutocompleteFooterFor _ _ _ =
 serverCommandMarker :: Text
 serverCommandMarker = "*"
 
-renderAutocompleteAlternative :: Text -> Bool -> AutocompleteAlternative -> Widget Name
-renderAutocompleteAlternative _ sel (EmojiCompletion e) =
-    padRight Max $ renderEmojiCompletion sel e
-renderAutocompleteAlternative _ sel (SpecialMention m) =
+renderAutocompleteAlternative :: Text -> EmojiCollection -> Bool -> AutocompleteAlternative -> Widget Name
+renderAutocompleteAlternative _ em sel (EmojiCompletion e) =
+    padRight Max $ renderEmojiCompletion em sel e
+renderAutocompleteAlternative _ _ sel (SpecialMention m) =
     padRight Max $ renderSpecialMention m sel
-renderAutocompleteAlternative curUser sel (UserCompletion u inChan _) =
+renderAutocompleteAlternative curUser _ sel (UserCompletion u inChan _) =
     padRight Max $ renderUserCompletion curUser u inChan sel
-renderAutocompleteAlternative _ sel (ChannelCompletion inChan c) =
+renderAutocompleteAlternative _ _ sel (ChannelCompletion inChan c) =
     padRight Max $ renderChannelCompletion c inChan sel
-renderAutocompleteAlternative _ _ (SyntaxCompletion t) =
+renderAutocompleteAlternative _ _ _ (SyntaxCompletion t) =
     padRight Max $ txt t
-renderAutocompleteAlternative _ _ (CommandCompletion src n args desc) =
+renderAutocompleteAlternative _ _ _ (CommandCompletion src n args desc) =
     padRight Max $ renderCommandCompletion src n args desc
 
 renderSpecialMention :: SpecialMention -> Bool -> Widget Name
@@ -192,16 +193,18 @@ renderSpecialMention m sel =
             , txt desc
             ]
 
-renderEmojiCompletion :: Bool -> T.Text -> Widget Name
-renderEmojiCompletion sel e =
+renderEmojiCompletion :: EmojiCollection -> Bool -> T.Text -> Widget Name
+renderEmojiCompletion em sel e =
     let maybeForce = if sel
                      then forceAttr listSelectedFocusedAttr
                      else id
+        emojiDisplay = case lookupEmojiUnicode em e of
+            Just unicode -> unicode <> " :" <> e <> ":"
+            Nothing      -> ":" <> e <> ":"
     in maybeForce $
        padLeft (Pad 2) $
        withDefAttr emojiAttr $
-       txt $
-       autocompleteAlternativeReplacement $ EmojiCompletion e
+       txt emojiDisplay
 
 renderUserCompletion :: Text -> User -> Bool -> Bool -> Widget Name
 renderUserCompletion curUser u inChan selected =

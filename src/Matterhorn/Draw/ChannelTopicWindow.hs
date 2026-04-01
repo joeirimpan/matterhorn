@@ -35,10 +35,10 @@ drawChannelTopicWindow st tId =
          , hBorderWithLabel (withDefAttr clientEmphAttr $ txt "Preview")
          , vLimit previewHeight $
            viewport (ChannelTopicEditorPreview tId) Vertical $
-           renderText' (Just baseUrl) "" hSet Nothing topicTxtWithCursor
+           renderText' (Just baseUrl) "" hSet Nothing (st^.csResources.crEmoji) topicTxtWithCursor
          , hBorder
          , hCenter $
-           renderText' Nothing "" hSet Nothing
+           renderText' Nothing "" hSet Nothing (st^.csResources.crEmoji)
            "Press `Tab` to change focus to buttons."
          , hBox [ padRight Max $
                   padLeft (Pad 1) $
