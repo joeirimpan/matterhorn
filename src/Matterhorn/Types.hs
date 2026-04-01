@@ -258,6 +258,7 @@ module Matterhorn.Types
   , crSpellChecker
   , crWindowSize
   , crEmoji
+  , crImageCache
   , getSession
   , getResourceSession
 
@@ -426,6 +427,7 @@ import           Network.Mattermost.WebSocket ( WebsocketEvent, WebsocketActionR
 import           Matterhorn.Constants ( normalChannelSigil )
 import           Matterhorn.InputHistory
 import           Matterhorn.Emoji
+import           Matterhorn.Sixel ( ImageCache )
 import           Matterhorn.Types.Common
 import           Matterhorn.Types.Core
 import           Matterhorn.Types.Channels
@@ -1113,6 +1115,7 @@ data ChatResources =
                   , _crSyntaxMap           :: SyntaxMap
                   , _crLogManager          :: LogManager
                   , _crEmoji               :: EmojiCollection
+                  , _crImageCache          :: Maybe ImageCache
                   , _crSpellChecker        :: Maybe Aspell
                   , _crWindowSize          :: (Int, Int)
                   }

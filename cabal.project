@@ -1,5 +1,8 @@
 packages: ./matterhorn.cabal
           submodules/mattermost-api/
           submodules/mattermost-api-qc/
+          submodules/vty/
+          submodules/vty-crossplatform/
+          submodules/brick/
 
 constraints: cryptonite -use_target_attributes

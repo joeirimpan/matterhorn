@@ -78,6 +78,7 @@ library
                        Matterhorn.Draw.UserListWindow
                        Matterhorn.Draw.Util
                        Matterhorn.Emoji
+                       Matterhorn.Sixel
                        Matterhorn.Events
                        Matterhorn.Events.ChannelListWindow
                        Matterhorn.Events.ChannelSelect

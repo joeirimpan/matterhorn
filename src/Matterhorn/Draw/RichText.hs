@@ -34,7 +34,11 @@ import qualified Skylighting.Core as Sky
 import           Matterhorn.Constants ( normalChannelSigil, editMarking )
 import           Matterhorn.Draw.RichText.Flatten
 import           Matterhorn.Draw.RichText.Wrap
+import qualified Data.ByteString as BS
+import           System.IO.Unsafe ( unsafePerformIO )
+
 import           Matterhorn.Emoji ( EmojiCollection, lookupEmojiUnicode, emptyEmojiCollection )
+import           Matterhorn.Sixel ( ImageCache, lookupOrFetchEmojiImage )
 import           Matterhorn.Themes
 import           Matterhorn.Types ( HighlightSet(..), emptyHSet, SemEq(..)
                                   , addUserSigil, resultToWidget )
@@ -59,10 +63,12 @@ renderRichText :: SemEq a
                -- clickable regions.
                -> EmojiCollection
                -- ^ The emoji collection for Unicode rendering.
+               -> Maybe ImageCache
+               -- ^ Optional image cache for Sixel custom emoji rendering.
                -> Blocks
                -- ^ The content to render.
                -> Widget a
-renderRichText curUser hSet w doWrap doVerbTrunc nameGen em (Blocks bs) =
+renderRichText curUser hSet w doWrap doVerbTrunc nameGen em imgCache (Blocks bs) =
     runReader (do
               blocks <- mapM renderBlock (addBlankLines bs)
               return $ B.vBox $ toList blocks)
@@ -73,12 +79,13 @@ renderRichText curUser hSet w doWrap doVerbTrunc nameGen em (Blocks bs) =
                        , drawTruncateVerbatimBlocks = doVerbTrunc
                        , drawNameGen = nameGen
                        , drawEmojiCollection = em
+                       , drawImageCache = imgCache
                        })
 
 -- Render text to markdown without username highlighting, permalink
 -- detection, or clickable links
 renderText :: SemEq a => Text -> Widget a
-renderText txt = renderText' Nothing "" emptyHSet Nothing emptyEmojiCollection txt
+renderText txt = renderText' Nothing "" emptyHSet Nothing emptyEmojiCollection Nothing txt
 
 renderText' :: SemEq a
             => Maybe TeamBaseURL
@@ -92,11 +99,13 @@ renderText' :: SemEq a
             -- clickable regions.
             -> EmojiCollection
             -- ^ The emoji collection for Unicode rendering.
+            -> Maybe ImageCache
+            -- ^ Optional image cache for Sixel custom emoji.
             -> Text
             -- ^ The text to parse and then render as rich text.
             -> Widget a
-renderText' baseUrl curUser hSet nameGen em t =
-    renderRichText curUser hSet Nothing True Nothing nameGen em $
+renderText' baseUrl curUser hSet nameGen em imgCache t =
+    renderRichText curUser hSet Nothing True Nothing nameGen em imgCache $
         parseMarkdown baseUrl t
 
 -- Add blank lines only between adjacent elements of the same type, to
@@ -134,6 +143,7 @@ data DrawCfg a =
             , drawTruncateVerbatimBlocks :: Maybe Int
             , drawNameGen :: Maybe (Int -> Inline -> Maybe a)
             , drawEmojiCollection :: EmojiCollection
+            , drawImageCache :: Maybe ImageCache
             }
 
 renderBlock :: (Ord a, SemEq a) => Block -> M (Widget a) a
@@ -250,11 +260,12 @@ renderInlines es = do
     curUser <- asks drawCurUser
     nameGen <- asks drawNameGen
     emCol <- asks drawEmojiCollection
+    imgC <- asks drawImageCache
 
     return $ B.Widget B.Fixed B.Fixed $ do
         ctx <- B.getContext
         let width = fromMaybe (ctx^.B.availWidthL) w
-            ws    = fmap (renderWrappedLine curUser emCol) $
+            ws    = fmap (renderWrappedLine curUser emCol imgC) $
                     mconcat $
                     (doLineWrapping width <$> (F.toList $ flattenInlineSeq hSet nameGen es))
         B.render (vBox ws)
@@ -276,14 +287,14 @@ renderList ty _spacing bs = do
 
     return $ vBox results
 
-renderWrappedLine :: (Ord a, Show a) => Text -> EmojiCollection -> WrappedLine a -> Widget a
-renderWrappedLine curUser em l = hBox $ F.toList $ renderFlattenedValue curUser em <$> l
+renderWrappedLine :: (Ord a, Show a) => Text -> EmojiCollection -> Maybe ImageCache -> WrappedLine a -> Widget a
+renderWrappedLine curUser em imgCache l = hBox $ F.toList $ renderFlattenedValue curUser em imgCache <$> l
 
-renderFlattenedValue :: (Ord a, Show a) => Text -> EmojiCollection -> FlattenedValue a -> Widget a
-renderFlattenedValue curUser em (NonBreaking rs) =
-    let renderLine = hBox . F.toList . fmap (renderFlattenedValue curUser em)
+renderFlattenedValue :: (Ord a, Show a) => Text -> EmojiCollection -> Maybe ImageCache -> FlattenedValue a -> Widget a
+renderFlattenedValue curUser em imgCache (NonBreaking rs) =
+    let renderLine = hBox . F.toList . fmap (renderFlattenedValue curUser em imgCache)
     in vBox (F.toList $ renderLine <$> F.toList rs)
-renderFlattenedValue curUser em (SingleInline fi) = addClickable $ addHyperlink $ addStyles widget
+renderFlattenedValue curUser em imgCache (SingleInline fi) = addClickable $ addHyperlink $ addStyles widget
     where
         val = fiValue fi
         mUrl = fiURL fi
@@ -312,10 +323,12 @@ renderFlattenedValue curUser em (SingleInline fi) = addClickable $ addHyperlink 
             FUser u              -> colorUsername curUser u $ addUserSigil u
             FChannel c           -> B.withDefAttr channelNameAttr $
                                     B.txt $ normalChannelSigil <> c
-            FEmoji e             -> B.withDefAttr emojiAttr $
-                                    B.txt $ case lookupEmojiUnicode em e of
-                                        Just unicode -> unicode
-                                        Nothing      -> ":" <> e <> ":"
+            FEmoji e             -> case lookupEmojiUnicode em e of
+                                        Just unicode -> B.withDefAttr emojiAttr $ B.txt unicode
+                                        Nothing      -> case imgCache >>= lookupSixelEmoji e of
+                                            Just sixelData -> B.rawTermBytes sixelData 2 1
+                                            Nothing        -> B.withDefAttr emojiAttr $
+                                                              B.txt $ ":" <> e <> ":"
             FText t              -> if t == T.singleton (cursorSentinel)
                                     then B.visible $ B.txt " "
                                     else textWithCursor t
@@ -340,3 +353,12 @@ removeCursor = T.filter (/= cursorSentinel)
 -- Cursor sentinel for tracking the user's cursor position in previews.
 cursorSentinel :: Char
 cursorSentinel = '‸'
+
+-- | Look up a custom emoji's Sixel image from the cache. Uses
+-- unsafePerformIO since the ImageCache is a memoized IORef lookup
+-- (idempotent and safe in this context). The first access for a given
+-- emoji will trigger a blocking network fetch + conversion; subsequent
+-- accesses are instant.
+lookupSixelEmoji :: Text -> ImageCache -> Maybe BS.ByteString
+lookupSixelEmoji emojiName ic =
+    unsafePerformIO $ lookupOrFetchEmojiImage ic emojiName

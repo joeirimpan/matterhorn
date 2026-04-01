@@ -1,0 +1,15 @@
+*.o
+*.swp
+*.hi
+*.prof
+Setup
+dist
+dist-newstyle
+cabal.project.local
+.ghc.environment.*
+test/benchmark
+.hpc
+.cabal-sandbox
+cabal.sandbox.config
+test/cabal.sandbox.config
+.stack-work

@@ -37,6 +37,7 @@ import           Matterhorn.Prelude
 import           Matterhorn.Draw.Util
 import           Matterhorn.Draw.RichText
 import           Matterhorn.Emoji ( EmojiCollection, lookupEmojiUnicode )
+import           Matterhorn.Sixel ( ImageCache )
 import           Matterhorn.Themes
 import           Matterhorn.Types
 import           Matterhorn.Types.RichText
@@ -102,6 +103,8 @@ data MessageData =
                 , mdEmojiCollection :: EmojiCollection
                 -- ^ The emoji collection for rendering Unicode emoji
                 -- glyphs in message bodies and reactions.
+                , mdImageCache :: Maybe ImageCache
+                -- ^ Optional image cache for Sixel custom emoji rendering.
                 }
 
 maxMessageHeight :: Int
@@ -196,6 +199,7 @@ renderChatMessage st hs ind threadState clickableNameTag renderTimeFunc renderRe
               , mdTruncateVerbatimBlocks = st^.csVerbatimTruncateSetting
               , mdClickableNameTag  = clickableNameTag
               , mdEmojiCollection   = st^.csResources.crEmoji
+              , mdImageCache        = st^.csResources.crImageCache
               }
         fullMsg =
           case msg^.mUser of
@@ -489,7 +493,7 @@ renderMessage md@MessageData { mdMessage = msg, .. } =
                                                  mdWrapNonhighlightedCodeBlocks
                                                  mdTruncateVerbatimBlocks
                                                  (Just (mkClickableInline (msg^.mMessageId) mdClickableNameTag))
-                                                 mdEmojiCollection (Blocks bs)]
+                                                 mdEmojiCollection mdImageCache (Blocks bs)]
                          ]
                else nameNextToMessage hs w nameElems bs
 
@@ -502,7 +506,7 @@ renderMessage md@MessageData { mdMessage = msg, .. } =
                                   mdWrapNonhighlightedCodeBlocks
                                   mdTruncateVerbatimBlocks
                                   (Just (mkClickableInline (msg^.mMessageId) mdClickableNameTag))
-                                  mdEmojiCollection (Blocks bs)
+                                  mdEmojiCollection mdImageCache (Blocks bs)
                               ]
 
         isBreak i = i `elem` [ELineBreak, ESoftBreak]

@@ -95,7 +95,7 @@ drawMessageInterface st hs tId showNewMsgLine which renderReplyIndent focused =
                  Nothing -> emptyWidget
 
     showTypingUsers =
-        let format = renderText' Nothing (myUsername st) hs Nothing (st^.csResources.crEmoji)
+        let format = renderText' Nothing (myUsername st) hs Nothing (st^.csResources.crEmoji) (st^.csResources.crImageCache)
         in case allTypingUsers (st^.which.miEditor.esEphemeral.eesTypingUsers) of
             [] -> emptyWidget
             [uId] | Just un <- usernameForUserId uId st ->
@@ -400,6 +400,7 @@ inputArea st which focused hs =
                           , mdTruncateVerbatimBlocks = Nothing
                           , mdClickableNameTag  = getName editor
                           , mdEmojiCollection   = st^.csResources.crEmoji
+                          , mdImageCache        = st^.csResources.crImageCache
                           }
                         ]
             _ -> emptyWidget
@@ -629,7 +630,7 @@ renderUrlList st hs which =
                           case Seq.null (unInlines label) of
                               True -> emptyWidget
                               False -> txt ": " <+> renderRichText me hs Nothing False Nothing Nothing
-                                                    (st^.csResources.crEmoji)
+                                                    (st^.csResources.crEmoji) (st^.csResources.crImageCache)
                                                     (Blocks $ Seq.singleton $ Para label)
                   , fill ' '
                   , renderDate st $ withServerTime time

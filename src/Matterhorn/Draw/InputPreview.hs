@@ -86,6 +86,7 @@ inputPreview st editWhich tId vpName hs
                                   , mdTruncateVerbatimBlocks = Nothing
                                   , mdClickableNameTag  = tag
                                   , mdEmojiCollection   = st^.csResources.crEmoji
+                                  , mdImageCache        = st^.csResources.crImageCache
                                   }
                  in (maybePreviewViewport vpName msgPreview) <=>
                     hBorderWithLabel (withDefAttr clientEmphAttr $ str "[Preview ↑]")

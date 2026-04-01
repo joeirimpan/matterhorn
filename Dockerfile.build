@@ -1,0 +1,36 @@
+FROM haskell:9.4-slim-buster AS deps
+
+# Fix expired buster repos
+RUN echo "deb http://archive.debian.org/debian buster main" > /etc/apt/sources.list && \
+    echo "deb http://archive.debian.org/debian-security buster/updates main" >> /etc/apt/sources.list
+
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    zlib1g-dev \
+    libncurses-dev \
+    libsixel-bin \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy cabal project file first for better caching
+COPY cabal.project ./
+COPY matterhorn.cabal ./
+COPY submodules/mattermost-api/mattermost-api.cabal ./submodules/mattermost-api/
+COPY submodules/mattermost-api-qc/mattermost-api-qc.cabal ./submodules/mattermost-api-qc/
+COPY submodules/vty/vty.cabal ./submodules/vty/
+COPY submodules/vty-crossplatform/vty-crossplatform.cabal ./submodules/vty-crossplatform/
+COPY submodules/brick/brick.cabal ./submodules/brick/
+
+# Fetch dependencies
+RUN cabal update && cabal build --only-dependencies --project-file=cabal.project -j || true
+
+# Copy full source
+COPY . .
+
+# Build
+RUN cabal new-build -j --project-file=cabal.project 2>&1
+
+# Copy binary to /out
+RUN mkdir -p /out && \
+    cp $(cabal list-bin matterhorn --project-file=cabal.project) /out/matterhorn

@@ -35,6 +35,7 @@ import           Matterhorn.TimeUtils ( lookupLocalTimeZone, utcTimezone )
 import           Matterhorn.Types
 import           Matterhorn.Emoji
 import           Matterhorn.FilePaths ( userEmojiJsonPath, bundledEmojiJsonPath )
+import qualified Matterhorn.Sixel as Sixel
 
 
 incompleteCredentials :: Config -> ConnectionInfo
@@ -153,6 +154,16 @@ setupState mkVty mLogLocation config = do
 
     spResult <- maybeStartSpellChecker config
 
+    -- Set up Sixel image cache for custom emoji rendering.
+    -- Query cell pixel size and create the cache. If the query fails or
+    -- img2sixel is unavailable, imgCache will be Nothing and custom
+    -- emoji will fall back to text rendering.
+    imgCache <- do
+        (cw, ch) <- Sixel.queryCellPixelSize
+        if cw > 0 && ch > 0
+            then Just <$> Sixel.newImageCache session cw ch
+            else return Nothing
+
     let cr = ChatResources { _crSession             = session
                            , _crWebsocketThreadId   = Nothing
                            , _crConn                = cd
@@ -169,6 +180,7 @@ setupState mkVty mLogLocation config = do
                            , _crSyntaxMap           = mempty
                            , _crLogManager          = logMgr
                            , _crEmoji               = emoji
+                           , _crImageCache          = imgCache
                            , _crSpellChecker        = spResult
                            , _crWindowSize          = (0, 0)
                            }
