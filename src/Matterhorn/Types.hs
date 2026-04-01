@@ -14,6 +14,7 @@ module Matterhorn.Types
   , StartupStateInfo(..)
   , MHError(..)
   , CPUUsagePolicy(..)
+  , ImageProtocol(..)
   , SemEq(..)
   , Work(..)
   , handleEventWith
@@ -427,7 +428,7 @@ import           Network.Mattermost.WebSocket ( WebsocketEvent, WebsocketActionR
 import           Matterhorn.Constants ( normalChannelSigil )
 import           Matterhorn.InputHistory
 import           Matterhorn.Emoji
-import           Matterhorn.Sixel ( ImageCache )
+import           Matterhorn.Sixel ( ImageCache, ImageProtocol(..) )
 import           Matterhorn.Types.Common
 import           Matterhorn.Types.Core
 import           Matterhorn.Types.Channels
@@ -633,6 +634,8 @@ data Config =
            -- case-insensitively
            , configCharacterWidths :: Maybe CharWidths
            -- ^ Map of Unicode characters to widths to configure Vty
+           , configImageProtocol :: ImageProtocol
+           -- ^ Which image protocol to use for inline custom emoji.
            } deriving (Eq, Show)
 
 -- | The policy for CPU usage.

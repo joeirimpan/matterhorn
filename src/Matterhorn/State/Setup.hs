@@ -154,15 +154,15 @@ setupState mkVty mLogLocation config = do
 
     spResult <- maybeStartSpellChecker config
 
-    -- Set up Sixel image cache for custom emoji rendering.
-    -- Query cell pixel size and create the cache. If the query fails or
-    -- img2sixel is unavailable, imgCache will be Nothing and custom
-    -- emoji will fall back to text rendering.
-    imgCache <- do
-        (cw, ch) <- Sixel.queryCellPixelSize
-        if cw > 0 && ch > 0
-            then Just <$> Sixel.newImageCache session cw ch
-            else return Nothing
+    -- Set up image cache for custom emoji rendering, based on the
+    -- configured image protocol.
+    imgCache <- case configImageProtocol config of
+        NoImageProtocol -> return Nothing
+        proto -> do
+            (cw, ch) <- Sixel.queryCellPixelSize
+            if cw > 0 && ch > 0
+                then Just <$> Sixel.newImageCache session proto cw ch
+                else return Nothing
 
     let cr = ChatResources { _crSession             = session
                            , _crWebsocketThreadId   = Nothing

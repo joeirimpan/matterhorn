@@ -1,20 +1,20 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
--- | Sixel image support for rendering inline images in the terminal.
--- Converts PNG/GIF image data to Sixel escape sequences suitable for
--- terminals that support the Sixel graphics protocol (e.g. Foot,
--- xterm -ti vt340, mlterm).
+-- | Inline image support for rendering custom emoji in the terminal.
+-- Supports Sixel (Foot, xterm, mlterm, WezTerm) and Kitty graphics
+-- protocol (Foot 1.14+, Kitty, Ghostty, WezTerm).
 --
 -- Emoji images are fetched asynchronously: the first render of a custom
 -- emoji shows @:name:@ text, kicks off a background fetch, and
--- subsequent renders show the Sixel image once it's ready.
+-- subsequent renders show the inline image once it's ready.
 module Matterhorn.Sixel
   ( ImageCache
+  , ImageProtocol(..)
   , newImageCache
   , lookupOrFetchEmojiImage
   , lookupSixelEmoji
   , pngToSixel
+  , pngToKittyGraphics
   , queryCellPixelSize
   )
 where
@@ -26,6 +26,7 @@ import           Control.Concurrent ( forkIO )
 import qualified Control.Exception as E
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Base64 as B64
 import qualified Data.IORef as IORef
 import qualified Data.Map.Strict as Map
 import           Data.Text ( Text )
@@ -42,6 +43,16 @@ import           System.Process
 import           Network.Mattermost.Types ( Session )
 import qualified Network.Mattermost.Endpoints as MM
 
+-- | The image protocol for rendering inline custom emoji.
+data ImageProtocol =
+    NoImageProtocol
+    -- ^ Disable inline images; custom emoji render as @:name:@ text.
+    | SixelProtocol
+    -- ^ Use the Sixel graphics protocol (requires @img2sixel@).
+    | KittyProtocol
+    -- ^ Use the Kitty graphics protocol.
+    deriving (Eq, Show)
+
 -- | Tri-state cache entry for emoji images.
 data CacheEntry
     = Pending
@@ -51,29 +62,29 @@ data CacheEntry
     -- or converted (permanently cached as a failure).
     deriving (Eq)
 
--- | Cache for custom emoji Sixel images. Fetches happen on background
+-- | Cache for custom emoji inline images. Fetches happen on background
 -- threads so the UI is never blocked.
 data ImageCache = ImageCache
     { icCache :: IORef.IORef (Map.Map Text CacheEntry)
     , icSession :: Session
+    , icProtocol :: ImageProtocol
     , icCellWidth :: Int
     , icCellHeight :: Int
     }
 
 -- | Create a new empty image cache.
-newImageCache :: Session -> Int -> Int -> IO ImageCache
-newImageCache session cw ch = do
+newImageCache :: Session -> ImageProtocol -> Int -> Int -> IO ImageCache
+newImageCache session proto cw ch = do
     ref <- IORef.newIORef Map.empty
-    return $ ImageCache ref session cw ch
+    return $ ImageCache ref session proto cw ch
 
--- | Look up a custom emoji Sixel image. Returns:
+-- | Look up a custom emoji inline image. Returns:
 --
--- * @Just bs@ — Sixel data is ready.
--- * @Nothing@ — Not ready yet (first call triggers async fetch) or
+-- * @Just bs@ — image data is ready (Sixel or Kitty escape sequence).
+-- * @Nothing@ — not ready yet (first call triggers async fetch) or
 --   permanently unavailable.
 --
--- This function never blocks on network I/O. Safe to call from
--- rendering code (including via unsafePerformIO).
+-- This function never blocks on network I/O.
 lookupOrFetchEmojiImage :: ImageCache -> Text -> IO (Maybe BS.ByteString)
 lookupOrFetchEmojiImage ic emojiName = do
     cache <- IORef.readIORef (icCache ic)
@@ -88,10 +99,8 @@ lookupOrFetchEmojiImage ic emojiName = do
                     (Map.insert emojiName (Ready result))
             return Nothing
 
--- | Look up a custom emoji's Sixel image from the cache. Uses
--- unsafePerformIO since the ImageCache is a memoized IORef lookup.
--- On cache miss, kicks off an async fetch and returns Nothing
--- (the emoji renders as :name: text until the fetch completes).
+-- | Look up a custom emoji's inline image from the cache.
+-- On cache miss, kicks off an async fetch and returns Nothing.
 {-# NOINLINE lookupSixelEmoji #-}
 lookupSixelEmoji :: Text -> ImageCache -> Maybe BS.ByteString
 lookupSixelEmoji emojiName ic =
@@ -106,10 +115,13 @@ fetchAndConvert ic emojiName = do
         Right (Just pngData) -> do
             let targetW = icCellWidth ic * 2
                 targetH = icCellHeight ic
-            sixelResult <- pngToSixel pngData targetW targetH
-            case sixelResult of
+            convertResult <- case icProtocol ic of
+                SixelProtocol -> pngToSixel pngData targetW targetH
+                KittyProtocol -> return $ Right $ pngToKittyGraphics pngData targetW targetH
+                NoImageProtocol -> return $ Left "images disabled"
+            case convertResult of
                 Left _err -> return Nothing
-                Right sixelData -> return (Just sixelData)
+                Right imgData -> return (Just imgData)
 
 -- | Fetch the image for a custom emoji by name.
 fetchEmojiByName :: ImageCache -> Text -> IO (Maybe BS.ByteString)
@@ -121,7 +133,55 @@ fetchEmojiByName ic name = do
             return (Just imgData)
         [] -> return Nothing
 
--- | Convert raw image bytes (PNG/GIF) to Sixel format using img2sixel.
+-- | Convert raw image bytes to Kitty graphics protocol escape sequence.
+-- No external tools needed — just base64-encodes the PNG data and wraps
+-- it in the Kitty graphics escape sequence.
+--
+-- The image is displayed inline using a "virtual placement" with the
+-- specified pixel dimensions.
+pngToKittyGraphics :: BS.ByteString
+                   -- ^ Raw image data (PNG)
+                   -> Int
+                   -- ^ Target width in pixels
+                   -> Int
+                   -- ^ Target height in pixels
+                   -> BS.ByteString
+pngToKittyGraphics pngData _targetW _targetH =
+    -- Kitty graphics protocol:
+    -- ESC _ G <key>=<value>,... ; <base64 data> ESC \.
+    --
+    -- a=T  : transmit and display
+    -- f=100: PNG format
+    -- t=d  : direct (data is in the payload)
+    -- c=2,r=1: display in 2 columns, 1 row of cells
+    -- C=1  : do not move cursor (we handle cursor positioning in vty)
+    -- q=2  : suppress response from terminal
+    --
+    -- For large payloads we must chunk into 4096-byte pieces.
+    let b64 = B64.encode pngData
+        header = "\x1b_Ga=T,f=100,t=d,c=2,r=1,C=1,q=2"
+    in if BS.length b64 <= 4096
+        then header <> ";" <> b64 <> "\x1b\\"
+        else emitChunked header b64
+
+-- | Emit Kitty graphics data in chunks of 4096 bytes.
+-- First chunk uses the full header with m=1 (more data follows).
+-- Middle chunks use m=1. Last chunk uses m=0 (no more data).
+emitChunked :: BS.ByteString -> BS.ByteString -> BS.ByteString
+emitChunked header b64 = go True b64
+  where
+    go isFirst remaining =
+        let (chunk, rest) = BS.splitAt 4096 remaining
+            hasMore = not (BS.null rest)
+            prefix = if isFirst
+                     then header <> ",m=" <> if hasMore then "1;" else "0;"
+                     else "\x1b_Gm=" <> if hasMore then "1;" else "0;"
+            thisChunk = prefix <> chunk <> "\x1b\\"
+        in if hasMore
+           then thisChunk <> go False rest
+           else thisChunk
+
+-- | Convert raw image bytes to Sixel format using img2sixel.
 pngToSixel :: BS.ByteString -> Int -> Int -> IO (Either String BS.ByteString)
 pngToSixel imageData targetW targetH = do
     result <- E.try $ readProcessBS "img2sixel"

@@ -158,6 +158,8 @@ fromIni = do
       (configMouseMode defaultConfig)
     configChannelSelectCaseInsensitive <- fieldFlagDef "channelSelectCaseInsensitive"
       (configChannelSelectCaseInsensitive defaultConfig)
+    configImageProtocol <- fieldDefOf "imageProtocol" imageProtocolField
+      (configImageProtocol defaultConfig)
 
     let configAbsPath = Nothing
         configUserKeys = newKeyConfig allEvents [] []
@@ -361,6 +363,15 @@ parseTeamListSorting t =
         Nothing ->
             Left ("Invalid value " <> show t <> "; must be one of " <> intercalate ", " (fst <$> validValues))
 
+imageProtocolField :: Text -> Either String ImageProtocol
+imageProtocolField t =
+    case T.toLower t of
+        "none"  -> return NoImageProtocol
+        "sixel" -> return SixelProtocol
+        "kitty" -> return KittyProtocol
+        _ -> Left $ "Invalid imageProtocol value: " <> show t <>
+                    " (expected: none, sixel, kitty)"
+
 cpuUsagePolicy :: Text -> Either String CPUUsagePolicy
 cpuUsagePolicy t =
     case T.toLower t of
@@ -446,6 +457,7 @@ defaultConfig = addDefaultKeys $
            , configTeamListSorting             = TeamListSortDefault
            , configChannelSelectCaseInsensitive = False
            , configCharacterWidths             = Nothing
+           , configImageProtocol               = NoImageProtocol
            }
 
 findConfig :: Maybe FilePath -> IO (Either String ([String], Config))
