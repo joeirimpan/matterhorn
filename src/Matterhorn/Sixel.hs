@@ -112,16 +112,22 @@ fetchAndConvert ic emojiName = do
     case result of
         Left (_ :: E.SomeException) -> return Nothing
         Right Nothing -> return Nothing
-        Right (Just pngData) -> do
+        Right (Just imgData) -> do
             let targetW = icCellWidth ic * 2
                 targetH = icCellHeight ic
             convertResult <- case icProtocol ic of
-                SixelProtocol -> pngToSixel pngData targetW targetH
-                KittyProtocol -> return $ Right $ pngToKittyGraphics pngData targetW targetH
+                SixelProtocol -> pngToSixel imgData targetW targetH
+                KittyProtocol -> do
+                    -- Kitty only accepts PNG. Convert any image format
+                    -- (GIF, JPEG, etc.) to PNG first.
+                    pngResult <- ensurePng imgData targetW targetH
+                    case pngResult of
+                        Left _err -> return $ Left _err
+                        Right pngBytes -> return $ Right $ pngToKittyGraphics pngBytes
                 NoImageProtocol -> return $ Left "images disabled"
             case convertResult of
                 Left _err -> return Nothing
-                Right imgData -> return (Just imgData)
+                Right out -> return (Just out)
 
 -- | Fetch the image for a custom emoji by name.
 fetchEmojiByName :: ImageCache -> Text -> IO (Maybe BS.ByteString)
@@ -133,20 +139,47 @@ fetchEmojiByName ic name = do
             return (Just imgData)
         [] -> return Nothing
 
--- | Convert raw image bytes to Kitty graphics protocol escape sequence.
--- No external tools needed — just base64-encodes the PNG data and wraps
--- it in the Kitty graphics escape sequence.
---
--- The image is displayed inline using a "virtual placement" with the
--- specified pixel dimensions.
+-- | Convert any image format (GIF, JPEG, etc.) to PNG at the target
+-- size using ImageMagick. If the input is already a correctly-sized
+-- PNG, this is a no-op in terms of quality (but still re-encodes).
+ensurePng :: BS.ByteString -> Int -> Int -> IO (Either String BS.ByteString)
+ensurePng imgData targetW targetH = do
+    let geometry = show targetW ++ "x" ++ show targetH ++ "!"
+    result <- E.try $ readProcessBS "magick"
+                [ "-"               -- read from stdin
+                , "-resize", geometry
+                , "-background", "none"
+                , "-flatten"
+                , "png:-"           -- write PNG to stdout
+                ]
+                imgData
+    case result of
+        Left (e :: E.SomeException) ->
+            -- Fall back to 'convert' for older ImageMagick
+            do result2 <- E.try $ readProcessBS "convert"
+                            [ "-"
+                            , "-resize", geometry
+                            , "-background", "none"
+                            , "-flatten"
+                            , "png:-"
+                            ]
+                            imgData
+               case result2 of
+                   Left (e2 :: E.SomeException) ->
+                       return $ Left $ "image conversion failed: " ++ show e2
+                   Right (ExitSuccess, out, _) -> return $ Right out
+                   Right (ExitFailure n, _, err) ->
+                       return $ Left $ "convert failed (" ++ show n ++ "): " ++ BS8.unpack err
+        Right (ExitSuccess, out, _) -> return $ Right out
+        Right (ExitFailure n, _, err) ->
+            return $ Left $ "magick failed (" ++ show n ++ "): " ++ BS8.unpack err
+
+-- | Convert PNG bytes to Kitty graphics protocol escape sequence.
+-- The PNG data is base64-encoded and wrapped in Kitty's APC sequence.
 pngToKittyGraphics :: BS.ByteString
-                   -- ^ Raw image data (PNG)
-                   -> Int
-                   -- ^ Target width in pixels
-                   -> Int
-                   -- ^ Target height in pixels
+                   -- ^ PNG image data
                    -> BS.ByteString
-pngToKittyGraphics pngData _targetW _targetH =
+pngToKittyGraphics pngData =
     -- Kitty graphics protocol:
     -- ESC _ G <key>=<value>,... ; <base64 data> ESC \.
     --
