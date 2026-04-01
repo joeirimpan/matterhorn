@@ -37,7 +37,7 @@ import           Matterhorn.Prelude
 import           Matterhorn.Draw.Util
 import           Matterhorn.Draw.RichText
 import           Matterhorn.Emoji ( EmojiCollection, lookupEmojiUnicode )
-import           Matterhorn.Sixel ( ImageCache )
+import           Matterhorn.Sixel ( ImageCache, lookupSixelEmoji )
 import           Matterhorn.Themes
 import           Matterhorn.Types
 import           Matterhorn.Types.RichText
@@ -528,17 +528,19 @@ messageReactions MessageData { mdMessage = msg, .. } =
     else let renderR e us lst =
                  let n = Set.size us
                      mine = isMyReaction us
-                     emojiDisplay = case lookupEmojiUnicode mdEmojiCollection e of
-                         Just unicode -> unicode
-                         Nothing      -> e
-                     content = if | n == 1    -> "[" <> emojiDisplay <> "]"
-                                  | otherwise -> "[" <> emojiDisplay <> " " <> T.pack (show n) <> "]"
+                     emojiWidget = case lookupEmojiUnicode mdEmojiCollection e of
+                         Just unicode -> txt unicode
+                         Nothing      -> case mdImageCache >>= lookupSixelEmoji e of
+                             Just sixelData -> rawTermBytes sixelData 2 1
+                             Nothing        -> txt e
+                     countStr = if n == 1 then "" else " " <> T.pack (show n)
+                     content = hBox [txt "[", emojiWidget, txt (countStr <> "]")]
                      w = makeReactionWidget mine e us content
                  in padRight (Pad 1) w : lst
              nonEmptyReactions = Map.filter (not . Set.null) $ msg^.mReactions
              isMyReaction = Set.member mdMyUserId
-             makeReactionWidget mine e us t =
-                 let w = withDefAttr attr $ txt t
+             makeReactionWidget mine e us widget =
+                 let w = withDefAttr attr widget
                      attr = if mine then myReactionAttr else reactionAttr
                  in maybe w (flip clickable w) $ makeName e us
              hasAnyReactions = not $ null nonEmptyReactions

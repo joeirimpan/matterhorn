@@ -35,10 +35,9 @@ import           Matterhorn.Constants ( normalChannelSigil, editMarking )
 import           Matterhorn.Draw.RichText.Flatten
 import           Matterhorn.Draw.RichText.Wrap
 import qualified Data.ByteString as BS
-import           System.IO.Unsafe ( unsafePerformIO )
 
 import           Matterhorn.Emoji ( EmojiCollection, lookupEmojiUnicode, emptyEmojiCollection )
-import           Matterhorn.Sixel ( ImageCache, lookupOrFetchEmojiImage )
+import           Matterhorn.Sixel ( ImageCache, lookupSixelEmoji )
 import           Matterhorn.Themes
 import           Matterhorn.Types ( HighlightSet(..), emptyHSet, SemEq(..)
                                   , addUserSigil, resultToWidget )
@@ -354,11 +353,4 @@ removeCursor = T.filter (/= cursorSentinel)
 cursorSentinel :: Char
 cursorSentinel = '‸'
 
--- | Look up a custom emoji's Sixel image from the cache. Uses
--- unsafePerformIO since the ImageCache is a memoized IORef lookup
--- (idempotent and safe in this context). The first access for a given
--- emoji will trigger a blocking network fetch + conversion; subsequent
--- accesses are instant.
-lookupSixelEmoji :: Text -> ImageCache -> Maybe BS.ByteString
-lookupSixelEmoji emojiName ic =
-    unsafePerformIO $ lookupOrFetchEmojiImage ic emojiName
+

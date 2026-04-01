@@ -102,10 +102,12 @@ splitOpsAt = splitOpsAt'
                      in (Vector.cons s pre, post)
                 -- Sixel images are indivisible; if we can't fit the
                 -- whole thing, replace with a skip of the requested
-                -- width and push the full sixel span to the post side.
-                else ( Vector.singleton $ Skip remainingColumns
-                     , Vector.cons s (Vector.tail ops)
-                     )
+                -- width on the pre side, and a skip for the remainder
+                -- plus any following ops on the post side.
+                else let postWidth = w - remainingColumns
+                     in ( Vector.singleton $ Skip remainingColumns
+                        , Vector.cons (Skip postWidth) (Vector.tail ops)
+                        )
             Skip w -> if remainingColumns >= w
                 then let (pre,post) = splitOpsAt' (remainingColumns - w) (Vector.tail ops)
                      in (Vector.cons (Skip w) pre, post)

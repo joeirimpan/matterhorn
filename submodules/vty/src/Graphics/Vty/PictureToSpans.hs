@@ -287,25 +287,30 @@ addMaybeClipped BGFill {outputWidth, outputHeight} = do
     forM_ [y..y+outputHeight'-1] $ snocOp (Skip outputWidth')
 addMaybeClipped (SixelImage d ow oh) = do
     -- Sixel images are indivisible: if any clipping is required we
-    -- replace the image with a skip (blank space) of the same size.
-    -- For the first visible row, emit a SixelSpan; for subsequent
-    -- rows within the image height, emit Skips to reserve the space.
+    -- fall back to a text placeholder. For the first visible row,
+    -- emit a SixelSpan; for subsequent rows within the image height,
+    -- emit Skips to reserve the space.
     s <- get
     let clipped = s^.skipColumns > 0
                   || s^.skipRows > 0
                   || (s^.remainingColumns < ow)
                   || (s^.remainingRows < oh)
-    y <- use rowOffset
     if clipped
         then do
-            let ow' = min ow (s^.remainingColumns)
-                oh' = min (oh - s^.skipRows) (s^.remainingRows)
-            forM_ [y..y + oh' - 1] $ snocOp (Skip ow')
+            -- Fall back: treat as a text span with placeholder chars.
+            -- This avoids partial rendering of indivisible images.
+            let ow' = max 0 $ min (ow - s^.skipColumns) (s^.remainingColumns)
+                oh' = max 0 $ min (oh - s^.skipRows) (s^.remainingRows)
+            y <- use rowOffset
+            when (ow' > 0 && oh' > 0) $
+                forM_ [y..y + oh' - 1] $ snocOp (Skip ow')
         else do
-            -- First row gets the SixelSpan
-            snocOp (SixelSpan d ow) y
-            -- Remaining rows get Skips to reserve space
-            forM_ [y+1..y+oh-1] $ snocOp (Skip ow)
+            y <- use rowOffset
+            when (ow > 0 && oh > 0) $ do
+                -- First row gets the SixelSpan
+                snocOp (SixelSpan d ow) y
+                -- Remaining rows get Skips to reserve space
+                forM_ [y+1..y+oh-1] $ snocOp (Skip ow)
 addMaybeClipped Crop {croppedImage, leftSkip, topSkip, outputWidth, outputHeight} = do
     sx <- use skipColumns
     skipColumns += leftSkip
