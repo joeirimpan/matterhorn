@@ -22,15 +22,18 @@ COPY submodules/vty/vty.cabal ./submodules/vty/
 COPY submodules/vty-crossplatform/vty-crossplatform.cabal ./submodules/vty-crossplatform/
 COPY submodules/brick/brick.cabal ./submodules/brick/
 
-# Fetch dependencies
-RUN cabal update && cabal build --only-dependencies --project-file=cabal.project -j || true
+# Fetch dependencies (cached by .cabal file layer)
+RUN --mount=type=cache,target=/root/.local/state/cabal \
+    --mount=type=cache,target=/root/.cabal \
+    cabal update && cabal build --only-dependencies --project-file=cabal.project -j || true
 
 # Copy full source
 COPY . .
 
-# Build
-RUN cabal new-build -j --project-file=cabal.project 2>&1
-
-# Copy binary to /out
-RUN mkdir -p /out && \
-    cp $(cabal list-bin matterhorn --project-file=cabal.project) /out/matterhorn
+# Build — cache dist-newstyle and cabal store for incremental rebuilds
+RUN --mount=type=cache,target=/root/.local/state/cabal \
+    --mount=type=cache,target=/root/.cabal \
+    --mount=type=cache,target=/build/dist-newstyle \
+    cabal new-build -j --project-file=cabal.project 2>&1 \
+    && mkdir -p /out \
+    && cp $(cabal list-bin matterhorn --project-file=cabal.project) /out/matterhorn

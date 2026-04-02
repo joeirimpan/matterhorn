@@ -46,6 +46,27 @@ an SSH key present for GitHub access or don't have a GitHub account),
 you'll need to edit the `.gitmodules` file and convert the submodule
 URLs to HTTPS. Then run `git submodule sync`.
 
+Build with Docker
+=================
+
+The simplest way to build Matterhorn is with Docker. This avoids
+installing GHC and Cabal locally. Requires Docker with BuildKit support.
+
+1. Clone the repo and fetch submodules (see above).
+2. Build the binary:
+
+```
+DOCKER_BUILDKIT=1 docker build -f Dockerfile.build -t matterhorn-build .
+```
+
+3. Copy the binary out of the image:
+
+```
+docker run --rm -v "$PWD:/host" matterhorn-build cp /out/matterhorn /host/
+```
+
+Subsequent builds are incremental — only changed modules are recompiled.
+
 Build from tarball
 ==================
 

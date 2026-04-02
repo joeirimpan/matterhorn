@@ -224,13 +224,32 @@ outputPicture dc pic = do
         initialAttr = FixedAttr defaultStyleMask Nothing Nothing Nothing
         -- Diff the previous output against the requested output.
         -- Differences are currently on a per-row basis.
-        diffs :: [Bool] = case prevOutputOps as of
+        --
+        -- Kitty graphics placements are persistent overlays that must be
+        -- deleted and re-emitted each frame. When any row contains a
+        -- SixelSpan (image), we delete all placements at frame start and
+        -- force all image rows to re-render regardless of whether their
+        -- ops changed.
+        hasAnyImages = Vector.any (Vector.any isSixelOp) ops
+        isSixelOp (SixelSpan _ _) = True
+        isSixelOp _               = False
+        baseDiffs :: [Bool] = case prevOutputOps as of
             Nothing -> replicate (fromEnum $ regionHeight $ affectedRegion ops) True
             Just previousOps -> if affectedRegion previousOps /= affectedRegion ops
                 then replicate (displayOpsRows ops) True
                 else Vector.toList $ Vector.zipWith (/=) previousOps ops
+        diffs :: [Bool] = if hasAnyImages
+            then zipWith (\d row -> d || Vector.any isSixelOp row)
+                         baseDiffs (Vector.toList ops)
+            else baseDiffs
+        -- Delete all kitty graphics placements when images are present.
+        -- ESC _ G a=d,d=a,q=2 ESC \ — silently ignored by non-kitty terminals.
+        kittyDelete = if hasAnyImages
+            then writeByteString (BS.pack [0x1b, 0x5f, 0x47, 0x61, 0x3d, 0x64, 0x2c, 0x64, 0x3d, 0x61, 0x2c, 0x71, 0x3d, 0x32, 0x1b, 0x5c])
+            else mempty
         -- build the Write corresponding to the output image
         out = (if manipCursor then writeHideCursor dc else mempty)
+              `mappend` kittyDelete
               `mappend` writeOutputOps urlsEnabled dc initialAttr diffs ops
               `mappend`
                 (let (w,h) = contextRegion dc
@@ -297,14 +316,22 @@ writeSpanOp urlsEnabled dc (TextSpan attr _ _ str) fattr =
     in (out, fattr')
 writeSpanOp urlsEnabled dc (SixelSpan d w) fattr =
     -- Reset attributes before emitting raw image data, then emit the
-    -- sixel bytes. After the sixel data is emitted the cursor may have
+    -- image bytes. After the data is emitted the cursor may have
     -- moved; we use save/restore cursor to keep the cursor on the same
     -- row, then advance it by the image width in columns.
+    --
+    -- We first write spaces to blank the underlying cells. Without this,
+    -- terminals that don't support the image protocol (or when the image
+    -- uses transparency) would show stale text from previous renders in
+    -- the cells that cursorForward skips over. For Sixel this is
+    -- harmless since the pixel data overwrites cells visually.
     let out = writeDefaultAttr dc urlsEnabled
               `mappend` writeByteString (BS.pack [0x1b, 0x37])       -- ESC 7: save cursor
-              `mappend` writeByteString d                              -- Sixel data
+              `mappend` writeByteString (BS.replicate w 0x20)        -- blank cells with spaces
               `mappend` writeByteString (BS.pack [0x1b, 0x38])       -- ESC 8: restore cursor
-              `mappend` writeByteString (cursorForward w)             -- Move right by width
+              `mappend` writeByteString d                              -- image data
+              `mappend` writeByteString (BS.pack [0x1b, 0x38])       -- ESC 8: restore cursor
+              `mappend` writeByteString (cursorForward w)             -- move right by width
     in (out, fattr)
   where
     -- CSI <n> C — Cursor Forward
