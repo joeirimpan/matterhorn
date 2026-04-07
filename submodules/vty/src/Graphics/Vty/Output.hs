@@ -22,6 +22,7 @@ import Blaze.ByteString.Builder (Write, writeToByteString)
 import Blaze.ByteString.Builder.ByteString (writeByteString)
 import Control.Monad (when)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 import Data.IORef
 import qualified Data.Vector as Vector
 #if !MIN_VERSION_base(4,11,0)
@@ -231,6 +232,9 @@ outputPicture dc pic = do
         -- force all image rows to re-render regardless of whether their
         -- ops changed.
         hasAnyImages = Vector.any (Vector.any isSixelOp) ops
+        hadAnyImages = case prevOutputOps as of
+            Nothing -> False
+            Just prev -> Vector.any (Vector.any isSixelOp) prev
         isSixelOp (SixelSpan _ _) = True
         isSixelOp _               = False
         baseDiffs :: [Bool] = case prevOutputOps as of
@@ -242,13 +246,26 @@ outputPicture dc pic = do
             then zipWith (\d row -> d || Vector.any isSixelOp row)
                          baseDiffs (Vector.toList ops)
             else baseDiffs
-        -- Delete all kitty graphics placements when images are present.
+        -- Delete all Kitty graphics placements when images are (or
+        -- were) present.  The previous-frame check handles the case
+        -- where the user switches to a view with no images — stale
+        -- placements from the old view must still be removed.
         -- ESC _ G a=d,d=a,q=2 ESC \ — silently ignored by non-kitty terminals.
-        kittyDelete = if hasAnyImages
+        kittyDelete = if hasAnyImages || hadAnyImages
             then writeByteString (BS.pack [0x1b, 0x5f, 0x47, 0x61, 0x3d, 0x64, 0x2c, 0x64, 0x3d, 0x61, 0x2c, 0x71, 0x3d, 0x32, 0x1b, 0x5c])
             else mempty
+        -- Synchronized output: wrap the whole frame in
+        -- CSI ? 2026 h (begin) / CSI ? 2026 l (end) so that
+        -- terminals that support it (Ghostty, Kitty, Foot, …)
+        -- buffer the delete-all + re-place and paint them as a
+        -- single atomic frame.  Eliminates flicker from the
+        -- momentary gap between deleting old Kitty graphics
+        -- placements and emitting new ones.
+        syncBegin = writeByteString (BS8.pack "\ESC[?2026h")
+        syncEnd   = writeByteString (BS8.pack "\ESC[?2026l")
         -- build the Write corresponding to the output image
-        out = (if manipCursor then writeHideCursor dc else mempty)
+        out = syncBegin
+              `mappend` (if manipCursor then writeHideCursor dc else mempty)
               `mappend` kittyDelete
               `mappend` writeOutputOps urlsEnabled dc initialAttr diffs ops
               `mappend`
@@ -273,6 +290,7 @@ outputPicture dc pic = do
                         in writeShowCursor dc `mappend`
                            writeMoveCursor dc (clampX ox) (clampY oy)
                 )
+              `mappend` syncEnd
     -- ... then serialize
     outputByteBuffer (contextDevice dc) (writeToByteString out)
     -- Cache the output spans.
